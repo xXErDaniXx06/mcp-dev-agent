@@ -1,91 +1,70 @@
+import asyncio
 import os
-import subprocess
+import shutil
 from dotenv import load_dotenv
 from anthropic import Anthropic
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
 
+# Cargamos credenciales
 load_dotenv()
 client = Anthropic()
 
-def leer_contexto():
-    try:
-        with open("agents.md", "r", encoding="utf-8") as f:
-            return f.read()
-    except FileNotFoundError:
-        return "Eres un asistente."
-
-def obtener_git_status():
-    resultado = subprocess.run(['git', 'status'], capture_output=True, text=True)
-    return resultado.stdout
-
-# NUEVA FUNCIÓN: La herramienta real que ejecutará el script
-def obtener_git_diff():
-    resultado = subprocess.run(['git', 'diff', 'HEAD'], capture_output=True, text=True, encoding='utf-8')
-    return resultado.stdout
-
-def probar_agente():
-    print("Iniciando Agente de Desarrollo...\n")
-    reglas = leer_contexto()
-    estado_git = obtener_git_status()
+async def iniciar_agente_web():
+    print("🚀 Arrancando el Servidor MCP de Puppeteer...")
     
-    # 1. Definimos la herramienta (Tool) para que Claude sepa que existe
-    mis_herramientas = [
-        {
-            "name": "obtener_git_diff",
-            "description": "Obtiene las diferencias exactas del código (git diff) para ver qué líneas se han modificado. Úsala siempre antes de hacer un commit.",
-            "input_schema": {
-                "type": "object",
-                "properties": {} # No necesita parámetros, solo ejecutarla
-            }
-        }
-    ]
+    # Buscamos npx de forma segura en Windows
+    ruta_npx = shutil.which("npx")
+    if not ruta_npx:
+        print("❌ Error: No se pudo encontrar npx en tu sistema.")
+        return
 
-    print("🧠 Agente analizando el status...\n")
-    
-    # 2. Primera llamada: Le pasamos el status y las herramientas
-    respuesta = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=300,
-        system=reglas,
-        tools=mis_herramientas, # AQUÍ LE DAMOS LA CAJA DE HERRAMIENTAS
-        messages=[
-            {"role": "user", "content": f"Este es mi 'git status':\n{estado_git}\n\nRedacta el comando de git commit."}
-        ]
+    # Parámetros limpios y exactos
+    server_params = StdioServerParameters(
+        command=ruta_npx,
+        args=["-y", "@modelcontextprotocol/server-puppeteer"],
+        env=os.environ.copy()
     )
-    
-    # 3. Comprobamos si Claude ha decidido usar la herramienta
-    if respuesta.stop_reason == "tool_use":
-        tool_call = next(block for block in respuesta.content if block.type == "tool_use")
-        print(f"🛠️  Claude ha decidido usar la herramienta: {tool_call.name}")
-        
-        # Ejecutamos la función en Python
-        if tool_call.name == "obtener_git_diff":
-            resultado_diff = obtener_git_diff()
-            print("📄 Leyendo tus cambios...\n")
-            
-            # 4. Segunda llamada: Le devolvemos el resultado del diff a Claude
-            respuesta_final = client.messages.create(
-                model="claude-sonnet-4-6",
-                max_tokens=300,
-                system=reglas,
-                messages=[
-                    {"role": "user", "content": f"Este es mi 'git status':\n{estado_git}\n\nRedacta el comando de git commit."},
-                    {"role": "assistant", "content": respuesta.content}, # Le recordamos que él pidió la herramienta
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": tool_call.id,
-                                "content": resultado_diff # Aquí le pasamos el código que has modificado
-                            }
-                        ]
-                    }
+
+    try:
+        async with stdio_client(server_params) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                print("✅ ¡Conectado al servidor MCP con éxito!")
+
+                herramientas_mcp = await session.list_tools()
+                nombres_herramientas = [t.name for t in herramientas_mcp.tools]
+                print(f"🛠️  Herramientas web disponibles: {nombres_herramientas}\n")
+
+                tools_para_claude = [
+                    {"name": t.name, "description": t.description, "input_schema": t.inputSchema}
+                    for t in herramientas_mcp.tools
                 ]
-            )
-            print("=== RESPUESTA FINAL DEL AGENTE ===")
-            print(respuesta_final.content[0].text)
-    else:
-        print(respuesta.content[0].text)
+
+                print("🧠 Pidiendo a Claude que navegue por internet...")
+                respuesta = client.messages.create(
+                    model="claude-sonnet-4-6",
+                    max_tokens=500,
+                    tools=tools_para_claude,
+                    messages=[
+                        {"role": "user", "content": "Navega a la web 'https://example.com' y dime exactamente qué texto aparece en el título principal de la página."}
+                    ]
+                )
+
+                if respuesta.stop_reason == "tool_use":
+                    tool_call = next(block for block in respuesta.content if block.type == "tool_use")
+                    print(f"🤖 Claude ejecutando: {tool_call.name} con parámetros: {tool_call.input}\n")
+                    
+                    # Llamamos a la herramienta en el servidor
+                    resultado = await session.call_tool(tool_call.name, tool_call.input)
+                    print("=== LO QUE VIO EL NAVEGADOR ===")
+                    print(resultado.content[0].text)
+                else:
+                    print("Respuesta de Claude sin usar herramientas:")
+                    print(respuesta.content[0].text)
+                    
+    except Exception as e:
+        print(f"💥 Error al conectar: {e}")
 
 if __name__ == "__main__":
-    probar_agente()
+    asyncio.run(iniciar_agente_web())
