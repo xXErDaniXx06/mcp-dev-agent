@@ -1,4 +1,5 @@
 import os
+import subprocess
 from dotenv import load_dotenv
 from anthropic import Anthropic
 
@@ -6,7 +7,7 @@ from anthropic import Anthropic
 load_dotenv()
 client = Anthropic()
 
-# Función para leer el cerebro del agente
+# 1. El Cerebro (Memoria)
 def leer_contexto():
     try:
         with open("agents.md", "r", encoding="utf-8") as f:
@@ -14,25 +15,32 @@ def leer_contexto():
     except FileNotFoundError:
         return "Eres un asistente de programación."
 
+# 2. LA NUEVA HABILIDAD: Leer la realidad de tu ordenador
+def obtener_git_status():
+    try:
+        # Esto ejecuta 'git status' en tu terminal y guarda el texto que devuelve
+        resultado = subprocess.run(['git', 'status'], capture_output=True, text=True, check=True)
+        return resultado.stdout
+    except Exception as e:
+        return f"Error leyendo git status: {e}"
+
 def probar_agente():
     print("Iniciando Agente de Desarrollo Local...\n")
     
-    # 1. Cargamos tu archivo de reglas
     reglas_del_agente = leer_contexto()
     
-    # 2. Simulamos que le pasas un cambio en el código
-    cambio_simulado = "He creado el archivo login.py y he añadido la función para validar contraseñas de usuarios."
+    print("👀 El agente está leyendo tu 'git status' real...")
+    estado_git = obtener_git_status()
     
-    print(f"Usuario: {cambio_simulado}")
-    print("Agente pensando...\n")
+    print("🧠 Agente pensando...\n")
     
-    # 3. Llamada al modelo inyectando el cerebro
+    # 3. Le pasamos la realidad al modelo, no una simulación
     respuesta = client.messages.create(
-        model="claude-sonnet-4-6", # El modelo que detectamos que funciona en tu cuenta
+        model="claude-sonnet-4-6", 
         max_tokens=300,
-        system=reglas_del_agente,  # AQUÍ LE INYECTAMOS TU ARCHIVO agents.md
+        system=reglas_del_agente,
         messages=[
-            {"role": "user", "content": f"Basado en tus reglas, redacta el comando exacto de git commit para este cambio: {cambio_simulado}"}
+            {"role": "user", "content": f"Basado en tus reglas, analiza este 'git status' real de mi repositorio y redacta el comando exacto de git commit para los cambios pendientes:\n\n{estado_git}"}
         ]
     )
     
