@@ -19,7 +19,7 @@ def obtener_git_status():
 
 # NUEVA FUNCIÓN: La herramienta real que ejecutará el script
 def obtener_git_diff():
-    resultado = subprocess.run(['git', 'diff'], capture_output=True, text=True)
+    resultado = subprocess.run(['git', 'diff', 'HEAD'], capture_output=True, text=True, encoding='utf-8')
     return resultado.stdout
 
 def probar_agente():
